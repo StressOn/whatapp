@@ -1,9 +1,32 @@
-name: Test Workflow
+name: Firebase Auto-Report
 on:
   workflow_dispatch: # Allows manual runs
+  schedule:
+    - cron: '0 9 * * 1'  # Every Monday at 9AM UTC
+
 jobs:
-  test:
+  generate-report:
     runs-on: ubuntu-latest
     steps:
-      - name: Check if working
-        run: echo "Success! Workflow is running"
+      - uses: actions/checkout@v4
+      
+      - name: Setup Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: '18'
+          
+      - name: Install dependencies
+        run: npm install firebase-admin
+        
+      - name: Generate report
+        env:
+          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+        run: |
+          echo "$FIREBASE_SERVICE_ACCOUNT" > serviceAccount.json
+          node firebase-report.js
+          
+      - name: Upload report
+        uses: actions/upload-artifact@v3
+        with:
+          name: firebase-report
+          path: report.html
