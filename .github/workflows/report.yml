@@ -1,0 +1,9 @@
+name: Test Workflow
+on:
+  workflow_dispatch: # Allows manual runs
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check if working
+        run: echo "Success! Workflow is running"
