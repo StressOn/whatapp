@@ -24,17 +24,15 @@ jobs:
         run: npm install firebase-admin nodemailer
         
       # ======================
-      # 2. SECRET DEBUG
+      # 2. SECRET VALIDATION
       # ======================
       - name: Validate Secrets
         run: |
           echo "FIREBASE_SERVICE_ACCOUNT length: ${{ secrets.FIREBASE_SERVICE_ACCOUNT.length }} chars"
           echo "GMAIL_APP_PASSWORD exists: ${{ secrets.GMAIL_APP_PASSWORD != '' }}"
-          echo "BOSS_EMAIL: ${{ secrets.BOSS_EMAIL }}"
-          echo "SENDER_EMAIL: ${{ secrets.SENDER_EMAIL }}"
           
       # ======================
-      # 3. RUN REPORT
+      # 3. MAIN EXECUTION
       # ======================
       - name: Generate and send report
         env:
@@ -43,19 +41,17 @@ jobs:
           BOSS_EMAIL: ${{ secrets.BOSS_EMAIL }}
           SENDER_EMAIL: ${{ secrets.SENDER_EMAIL }}
         run: |
-          # Write debug output to file
-          node firebase-report.js 2>&1 | tee debug.log
-          
-          # Upload debug logs as artifact
-          echo "=== DEBUG LOG ==="
+          # Run with debug output
+          node firebase-report.js | tee debug.log
+          echo "=== DEBUG OUTPUT ==="
           cat debug.log
           
       # ======================
-      # 4. ARTIFACTS (Optional)
+      # 4. ARTIFACT UPLOAD (FIXED)
       # ======================
       - name: Upload debug logs
-        if: always()  # Upload even if job fails
-        uses: actions/upload-artifact@v3
+        if: always()
+        uses: actions/upload-artifact@v4  # Changed from v3 to v4
         with:
           name: debug-logs
           path: debug.log
