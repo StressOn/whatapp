@@ -31,24 +31,7 @@ jobs:
           echo "FIREBASE_SERVICE_ACCOUNT length: ${{ secrets.FIREBASE_SERVICE_ACCOUNT.length }} chars"
           echo "GMAIL_APP_PASSWORD exists: ${{ secrets.GMAIL_APP_PASSWORD != '' }}"
           
-     - name: Validate Firebase JSON
-        run: |
-    # Save secret to file
-    echo "${{ secrets.FIREBASE_SERVICE_ACCOUNT }}" > temp.json
-    
-    # Basic checks
-    echo "=== FILE CONTENTS ==="
-    head -n 3 temp.json
-    echo "\n=== KEY FIELDS ==="
-    grep -E 'project_id|client_email' temp.json
-    
-    # Advanced validation
-    if ! jq empty temp.json; then
-      echo "❌ Invalid JSON"
-      exit 1
-    else
-      echo "✅ Valid JSON"
-    fi   
+  
       # ======================
       # 3. MAIN EXECUTION
       # ======================
