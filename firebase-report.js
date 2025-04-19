@@ -1,3 +1,10 @@
+try {
+  const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT);
+} catch (err) {
+  console.error("❌ Invalid Firebase JSON:", err.message);
+  console.log("Actual content received:", process.env.FIREBASE_SERVICE_ACCOUNT);
+  process.exit(1);
+}
 const admin = require('firebase-admin');
 const nodemailer = require('nodemailer');
 const { format, subDays } = require('date-fns');
