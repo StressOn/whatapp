@@ -43,15 +43,86 @@ try {
 }
 
 // ======================
-// 3. TEST EMAIL SENDING
+// 3. PRODUCTION REPORT FUNCTIONS
 // ======================
-async function sendTestEmail() {
-  try {
-    const nodemailer = require('nodemailer');
-    console.log("\n=== TEST EMAIL CONFIG ===");
-    console.log("From:", process.env.SENDER_EMAIL);
-    console.log("To:", process.env.BOSS_EMAIL);
 
+// Helper to get yesterday's date in Firebase timestamp format
+function getYesterdayTimestamps() {
+  const now = new Date();
+  const yesterdayStart = new Date(now);
+  yesterdayStart.setDate(now.getDate() - 1);
+  yesterdayStart.setHours(0, 0, 0, 0);
+  
+  const yesterdayEnd = new Date(yesterdayStart);
+  yesterdayEnd.setHours(23, 59, 59, 999);
+
+  return {
+    start: Math.floor(yesterdayStart.getTime() / 1000),
+    end: Math.floor(yesterdayEnd.getTime() / 1000)
+  };
+}
+
+async function getYesterdayProduction() {
+  try {
+    const { start, end } = getYesterdayTimestamps();
+    console.log(`\n📅 Fetching data from ${new Date(start * 1000)} to ${new Date(end * 1000)}`);
+
+    const db = admin.database();
+    const snapshot = await db.ref('Sensor/perday/readings')
+      .orderByChild('timestamp')
+      .startAt(start)
+      .endAt(end)
+      .once('value');
+
+    const data = snapshot.val() || {};
+    const readings = Object.values(data);
+    
+    console.log(`📊 Found ${readings.length} readings`);
+    return readings;
+    
+  } catch (err) {
+    console.error("❌ Failed to fetch production data:", err);
+    process.exit(1);
+  }
+}
+
+function generateReport(readings) {
+  const totalLength = readings.reduce((sum, r) => sum + (r.length || 0), 0);
+  const avgLength = readings.length ? (totalLength / readings.length).toFixed(2) : 0;
+  
+  return `
+    <h1>Yesterday's Production Report</h1>
+    <table border="1" cellpadding="5">
+      <tr>
+        <th>Metric</th>
+        <th>Value</th>
+      </tr>
+      <tr>
+        <td>Total Readings</td>
+        <td>${readings.length}</td>
+      </tr>
+      <tr>
+        <td>Total Length (meters)</td>
+        <td>${totalLength.toFixed(2)}</td>
+      </tr>
+      <tr>
+        <td>Average Length (meters)</td>
+        <td>${avgLength}</td>
+      </tr>
+    </table>
+    <h3>Detailed Readings</h3>
+    <pre>${JSON.stringify(readings, null, 2)}</pre>
+  `;
+}
+
+// ======================
+// 4. MAIN EXECUTION
+// ======================
+(async () => {
+  try {
+    const readings = await getYesterdayProduction();
+    const reportHtml = generateReport(readings);
+    
     const transporter = nodemailer.createTransport({
       service: 'gmail',
       auth: {
@@ -60,34 +131,16 @@ async function sendTestEmail() {
       }
     });
 
-    await transporter.verify();
-    console.log("✅ Transporter verified");
-
-    const info = await transporter.sendMail({
+    await transporter.sendMail({
       from: `"Production Bot" <${process.env.SENDER_EMAIL}>`,
       to: process.env.BOSS_EMAIL,
-      subject: "Test Email",
-      html: `<h1>Hai</h1><p>This is a simple test message.</p>`
+      subject: `Production Report - ${new Date().toLocaleDateString()}`,
+      html: reportHtml
     });
 
-    console.log("📧 Email sent:", info.response);
-    console.log("📨 Message ID:", info.messageId);
-
+    console.log("✅ Report sent successfully");
   } catch (err) {
-    console.error("❌ Email sending failed:", err.message);
-    process.exit(1);
-  }
-}
-
-// ======================
-// 4. MAIN EXECUTION
-// ======================
-(async () => {
-  try {
-    await sendTestEmail();
-    console.log("✅ Script completed successfully");
-  } catch (err) {
-    console.error("❌ Script crashed:", err);
+    console.error("❌ Script failed:", err);
     process.exit(1);
   }
 })();
