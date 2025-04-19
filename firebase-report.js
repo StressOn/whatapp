@@ -1,3 +1,17 @@
+// Top of file
+if (!process.env.FIREBASE_SERVICE_ACCOUNT) {
+  console.error("🚨 FIREBASE_SERVICE_ACCOUNT is undefined!");
+  console.log("Available env vars:", Object.keys(process.env));
+  process.exit(1);
+}
+
+try {
+  const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT);
+} catch (err) {
+  console.error("❌ Invalid JSON:", err.message);
+  console.log("Received value:", process.env.FIREBASE_SERVICE_ACCOUNT);
+  process.exit(1);
+}
 try {
   const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT);
 } catch (err) {
