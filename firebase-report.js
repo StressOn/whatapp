@@ -7,10 +7,8 @@ console.log(Object.keys(process.env).filter(k => k.includes('FIREBASE') || k.inc
 // Throw clear error if missing secrets
 if (!process.env.FIREBASE_SERVICE_ACCOUNT) {
   console.error("❌ MISSING: FIREBASE_SERVICE_ACCOUNT");
-  console.log("Available env vars:", Object.keys(process.env));
   process.exit(1);
 }
-
 if (!process.env.GMAIL_APP_PASSWORD) {
   console.error("❌ MISSING: GMAIL_APP_PASSWORD");
   process.exit(1);
@@ -29,7 +27,6 @@ try {
   });
 } catch (err) {
   console.error("❌ Invalid Firebase JSON:", err.message);
-  console.log("First 50 chars received:", process.env.FIREBASE_SERVICE_ACCOUNT.substring(0, 50));
   process.exit(1);
 }
 
@@ -46,30 +43,12 @@ try {
 }
 
 // ======================
-// 3. DATA FETCHING
+// 3. TEST EMAIL SENDING
 // ======================
-async function fetchData() {
-  try {
-    console.log("\n=== FETCHING DATA ===");
-    const db = admin.database();
-    const snapshot = await db.ref('production').once('value');
-    const data = snapshot.val();
-    
-    console.log(`📊 Records found: ${data ? Object.keys(data).length : 0}`);
-    return data || {};
-  } catch (err) {
-    console.error("❌ Data fetch failed:", err.message);
-    process.exit(1);
-  }
-}
-
-// ======================
-// 4. EMAIL SENDING
-// ======================
-async function sendEmail(html) {
+async function sendTestEmail() {
   try {
     const nodemailer = require('nodemailer');
-    console.log("\n=== EMAIL CONFIG ===");
+    console.log("\n=== TEST EMAIL CONFIG ===");
     console.log("From:", process.env.SENDER_EMAIL);
     console.log("To:", process.env.BOSS_EMAIL);
 
@@ -81,33 +60,31 @@ async function sendEmail(html) {
       }
     });
 
-    await transporter.sendMail({
-      from: process.env.SENDER_EMAIL,
+    await transporter.verify();
+    console.log("✅ Transporter verified");
+
+    const info = await transporter.sendMail({
+      from: `"Production Bot" <${process.env.SENDER_EMAIL}>`,
       to: process.env.BOSS_EMAIL,
-      subject: `Production Report - ${new Date().toLocaleDateString()}`,
-      html
+      subject: "Test Email",
+      html: `<h1>Hai</h1><p>This is a simple test message.</p>`
     });
-    console.log("📧 Email sent successfully");
+
+    console.log("📧 Email sent:", info.response);
+    console.log("📨 Message ID:", info.messageId);
+
   } catch (err) {
-    console.error("❌ Email failed:", err.message);
+    console.error("❌ Email sending failed:", err.message);
     process.exit(1);
   }
 }
 
 // ======================
-// 5. MAIN EXECUTION
+// 4. MAIN EXECUTION
 // ======================
 (async () => {
   try {
-    const data = await fetchData();
-    
-    const html = `
-      <h1>Production Report</h1>
-      <pre>${JSON.stringify(data, null, 2)}</pre>
-      <p>Generated at: ${new Date()}</p>
-    `;
-
-    await sendEmail(html);
+    await sendTestEmail();
     console.log("✅ Script completed successfully");
   } catch (err) {
     console.error("❌ Script crashed:", err);
