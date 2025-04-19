@@ -1,32 +1,27 @@
-name: Firebase Auto-Report
+name: Daily Gmail Report
 on:
-  workflow_dispatch: # Allows manual runs
   schedule:
-    - cron: '0 9 * * 1'  # Every Monday at 9AM UTC
+    - cron: '0 9 * * *'  # 9AM daily
+  workflow_dispatch:
 
 jobs:
-  generate-report:
+  send-report:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       
-      - name: Setup Node.js
+      - name: Setup Node
         uses: actions/setup-node@v3
         with:
           node-version: '18'
           
       - name: Install dependencies
-        run: npm install firebase-admin
-        
-      - name: Generate report
+        run: npm install firebase-admin date-fns nodemailer
+      
+      - name: Run and email report
         env:
-          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
-        run: |
-          echo "$FIREBASE_SERVICE_ACCOUNT" > serviceAccount.json
-          node firebase-report.js
-          
-      - name: Upload report
-        uses: actions/upload-artifact@v3
-        with:
-          name: firebase-report
-          path: report.html
+          FIREBASE_CONFIG: ${{ secrets.FIREBASE_CONFIG }}
+          GMAIL_USER: ${{ secrets.GMAIL_USER }}
+          GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
+          BOSS_EMAIL: ${{ secrets.BOSS_EMAIL }}
+        run: node firebase-report.js
