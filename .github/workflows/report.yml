@@ -1,7 +1,7 @@
 name: Daily Production Report
 on:
   schedule:
-    - cron: '0 9 * * *'  # 9AM UTC daily
+    - cron: '*/2 * * * *'  # every 2 minutes
   workflow_dispatch:     # Allow manual runs
 
 jobs:
