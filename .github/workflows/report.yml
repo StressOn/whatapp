@@ -1,27 +1,61 @@
-name: Daily Gmail Report
+name: Daily Production Report
 on:
   schedule:
-    - cron: '0 9 * * *'  # 9AM daily
-  workflow_dispatch:
+    - cron: '0 9 * * *'  # 9AM UTC daily
+  workflow_dispatch:     # Allow manual runs
 
 jobs:
-  send-report:
+  generate-and-send:
     runs-on: ubuntu-latest
+    
     steps:
-      - uses: actions/checkout@v4
-      
-      - name: Setup Node
+      # ======================
+      # 1. SETUP
+      # ======================
+      - name: Checkout code
+        uses: actions/checkout@v4
+        
+      - name: Setup Node.js
         uses: actions/setup-node@v3
         with:
           node-version: '18'
           
       - name: Install dependencies
-        run: npm install firebase-admin date-fns nodemailer
-      
-      - name: Run and email report
+        run: npm install firebase-admin nodemailer
+        
+      # ======================
+      # 2. SECRET DEBUG
+      # ======================
+      - name: Validate Secrets
+        run: |
+          echo "FIREBASE_SERVICE_ACCOUNT length: ${{ secrets.FIREBASE_SERVICE_ACCOUNT.length }} chars"
+          echo "GMAIL_APP_PASSWORD exists: ${{ secrets.GMAIL_APP_PASSWORD != '' }}"
+          echo "BOSS_EMAIL: ${{ secrets.BOSS_EMAIL }}"
+          echo "SENDER_EMAIL: ${{ secrets.SENDER_EMAIL }}"
+          
+      # ======================
+      # 3. RUN REPORT
+      # ======================
+      - name: Generate and send report
         env:
-          FIREBASE_CONFIG: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
-          GMAIL_USER: ${{ secrets.GMAIL_USER }}
+          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
           GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
           BOSS_EMAIL: ${{ secrets.BOSS_EMAIL }}
-        run: node firebase-report.js
+          SENDER_EMAIL: ${{ secrets.SENDER_EMAIL }}
+        run: |
+          # Write debug output to file
+          node firebase-report.js 2>&1 | tee debug.log
+          
+          # Upload debug logs as artifact
+          echo "=== DEBUG LOG ==="
+          cat debug.log
+          
+      # ======================
+      # 4. ARTIFACTS (Optional)
+      # ======================
+      - name: Upload debug logs
+        if: always()  # Upload even if job fails
+        uses: actions/upload-artifact@v3
+        with:
+          name: debug-logs
+          path: debug.log
