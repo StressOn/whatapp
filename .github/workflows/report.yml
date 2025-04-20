@@ -1,21 +1,16 @@
-name: Daily Production Report
+name: Production Report
 on:
   schedule:
-    - cron: '*/2 * * * *'  # every 2 minutes
-  workflow_dispatch:     # Allow manual runs
+    - cron: '*/2 * * * *'  # Every 5 minutes
+  workflow_dispatch:
 
 jobs:
-  generate-and-send:
+  generate-report:
     runs-on: ubuntu-latest
-    
     steps:
-      # ======================
-      # 1. SETUP
-      # ======================
-      - name: Checkout code
-        uses: actions/checkout@v4
-        
-      - name: Setup Node.js
+      - uses: actions/checkout@v4
+      
+      - name: Setup Node
         uses: actions/setup-node@v3
         with:
           node-version: '18'
@@ -23,37 +18,10 @@ jobs:
       - name: Install dependencies
         run: npm install firebase-admin nodemailer
         
-      # ======================
-      # 2. SECRET VALIDATION
-      # ======================
-      - name: Validate Secrets
-        run: |
-          echo "FIREBASE_SERVICE_ACCOUNT length: ${{ secrets.FIREBASE_SERVICE_ACCOUNT.length }} chars"
-          echo "GMAIL_APP_PASSWORD exists: ${{ secrets.GMAIL_APP_PASSWORD != '' }}"
-          
-  
-      # ======================
-      # 3. MAIN EXECUTION
-      # ======================
-      - name: Generate and send report
+      - name: Run report
         env:
           FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
           GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
           BOSS_EMAIL: ${{ secrets.BOSS_EMAIL }}
           SENDER_EMAIL: ${{ secrets.SENDER_EMAIL }}
-        run: |
-          # Run with debug output
-          node firebase-report.js | tee debug.log
-          echo "=== DEBUG OUTPUT ==="
-          cat debug.log
-
-      
-      # ======================
-      # 4. ARTIFACT UPLOAD (FIXED)
-      # ======================
-      - name: Upload debug logs
-        if: always()
-        uses: actions/upload-artifact@v4  # Changed from v3 to v4
-        with:
-          name: debug-logs
-          path: debug.log
+        run: node firebase-report.js
