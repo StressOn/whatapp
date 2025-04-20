@@ -1,89 +1,51 @@
-// ======================
-// 1. ENVIRONMENT CHECKS
-// ======================
-console.log("=== ENVIRONMENT VARIABLES ===");
-console.log(Object.keys(process.env).filter(k => k.includes('FIREBASE') || k.includes('GMAIL')));
+const admin = require('firebase-admin');
+const nodemailer = require('nodemailer');
 
-if (!process.env.FIREBASE_SERVICE_ACCOUNT) {
-  console.error("❌ MISSING: FIREBASE_SERVICE_ACCOUNT");
-  process.exit(1);
-}
-if (!process.env.GMAIL_APP_PASSWORD) {
-  console.error("❌ MISSING: GMAIL_APP_PASSWORD");
-  process.exit(1);
-}
+// Initialize Firebase
+admin.initializeApp({
+  credential: admin.credential.cert(JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT)),
+  databaseURL: "https://customer-2-88220-default-rtdb.firebaseio.com"
+});
 
-// ======================
-// 2. FIREBASE SETUP
-// ======================
-let serviceAccount;
-try {
-  serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT);
-  const admin = require('firebase-admin');
-  admin.initializeApp({
-    credential: admin.credential.cert(serviceAccount),
-    databaseURL: "https://customer-2-88220-default-rtdb.firebaseio.com"
-  });
-  console.log("🔥 Firebase initialized");
-} catch (err) {
-  console.error("❌ Firebase init failed:", err);
-  process.exit(1);
-}
-
-// ======================
-// 3. PRODUCTION MONITOR
-// ======================
-async function getCurrentProduction() {
+async function getProductionData() {
   const db = admin.database();
-  const snapshot = await db.ref('Sensor/perday/count').once('value');
+  const snapshot = await db.ref('Sensor/perday').once('value');
   return {
-    count: snapshot.val() || 0,
-    timestamp: new Date().toISOString()
+    count: snapshot.child('count').val() || 0,
+    timestamp: snapshot.child('timestamp').val() || Date.now()
   };
 }
 
-async function sendAlert(production) {
-  const nodemailer = require('nodemailer');
-  const transporter = nodemailer.createTransport({
-    service: 'gmail',
-    auth: {
-      user: process.env.SENDER_EMAIL,
-      pass: process.env.GMAIL_APP_PASSWORD
-    }
-  });
-
-  await transporter.sendMail({
-    from: `"Production Monitor" <${process.env.SENDER_EMAIL}>`,
-    to: process.env.BOSS_EMAIL,
-    subject: `🚨 Production Alert - ${new Date().toLocaleTimeString()}`,
-    html: `
-      <h1>Current Production Status</h1>
-      <p><strong>Count:</strong> ${production.count}</p>
-      <p><strong>Last Updated:</strong> ${production.timestamp}</p>
-    `
-  });
-}
-
-// ======================
-// 4. MONITORING LOOP
-// ======================
-(async () => {
+async function sendReport() {
   try {
-    // Run every 60 seconds
-    setInterval(async () => {
-      const production = await getCurrentProduction();
-      console.log(`🔄 [${new Date().toISOString()}] Current count: ${production.count}`);
-      
-      await sendAlert(production);
-      console.log("📧 Alert sent");
-    }, 60000); // 60,000ms = 1 minute
+    const { count, timestamp } = await getProductionData();
+    const date = new Date(timestamp * 1000).toLocaleString();
 
-    // Initial run
-    const initialProduction = await getCurrentProduction();
-    console.log("⏳ Starting monitor. Initial count:", initialProduction.count);
-    
+    const transporter = nodemailer.createTransport({
+      service: 'gmail',
+      auth: {
+        user: process.env.SENDER_EMAIL,
+        pass: process.env.GMAIL_APP_PASSWORD
+      }
+    });
+
+    await transporter.sendMail({
+      from: `"Production Alert" <${process.env.SENDER_EMAIL}>`,
+      to: process.env.BOSS_EMAIL,
+      subject: `Production Count: ${count} | ${date}`,
+      html: `
+        <h2>Production Snapshot</h2>
+        <p><strong>Count:</strong> ${count}</p>
+        <p><strong>Last Updated:</strong> ${date}</p>
+        <p><em>Generated at: ${new Date().toLocaleString()}</em></p>
+      `
+    });
+
+    console.log(`✅ Report sent | Count: ${count} | ${date}`);
   } catch (err) {
-    console.error("❌ Monitor failed:", err);
+    console.error('❌ Error:', err.message);
     process.exit(1);
   }
-})();
+}
+
+sendReport();
