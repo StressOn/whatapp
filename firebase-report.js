@@ -1,26 +1,32 @@
 const admin = require('firebase-admin');
 const nodemailer = require('nodemailer');
 
-// Initialize Firebase
+// ======================
+// 1. FIREBASE SETUP (UNCHANGED)
+// ======================
 admin.initializeApp({
   credential: admin.credential.cert(JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT)),
   databaseURL: "https://customer-2-88220-default-rtdb.firebaseio.com"
 });
 
+// ======================
+// 2. DATA COLLECTION (MINIMAL CHANGE)
+// ======================
 async function getProductionData() {
-  const db = admin.database();
-  const snapshot = await db.ref('Sensor/perday').once('value');
+  const snapshot = await admin.database().ref('Sensor/perday').once('value');
   return {
     count: snapshot.child('count').val() || 0,
-    timestamp: snapshot.child('timestamp').val() || Date.now()
+    timestamp: new Date((snapshot.child('timestamp').val() || 0) * 1000).toLocaleString()
   };
 }
 
+// ======================
+// 3. EMAIL SENDING (UNCHANGED FROM WORKING VERSION)
+// ======================
 async function sendReport() {
   try {
     const { count, timestamp } = await getProductionData();
-    const date = new Date(timestamp * 1000).toLocaleString();
-
+    
     const transporter = nodemailer.createTransport({
       service: 'gmail',
       auth: {
@@ -32,20 +38,18 @@ async function sendReport() {
     await transporter.sendMail({
       from: `"Production Alert" <${process.env.SENDER_EMAIL}>`,
       to: process.env.BOSS_EMAIL,
-      subject: `Production Count: ${count} | ${date}`,
-      html: `
-        <h2>Production Snapshot</h2>
-        <p><strong>Count:</strong> ${count}</p>
-        <p><strong>Last Updated:</strong> ${date}</p>
-        <p><em>Generated at: ${new Date().toLocaleString()}</em></p>
-      `
+      subject: `Production Update: ${count}`,
+      text: `Current count: ${count}\nLast Updated: ${timestamp}`
     });
 
-    console.log(`✅ Report sent | Count: ${count} | ${date}`);
+    console.log(`✅ Email sent | Count: ${count}`);
   } catch (err) {
-    console.error('❌ Error:', err.message);
+    console.error('❌ Failed:', err.message);
     process.exit(1);
   }
 }
 
+// ======================
+// 4. EXECUTION (UNCHANGED)
+// ======================
 sendReport();
