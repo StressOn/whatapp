@@ -1,27 +1,21 @@
-name: Production Report
+name: Daily Production Report
 on:
   schedule:
-    - cron: '*/2 * * * *'  # Every 5 minutes
+    - cron: '0 8 * * *'  # 8:00 AM every day
   workflow_dispatch:
 
 jobs:
-  generate-report:
+  send-report:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      
-      - name: Setup Node
-        uses: actions/setup-node@v3
+      - uses: actions/setup-node@v3
         with:
           node-version: '18'
-          
-      - name: Install dependencies
-        run: npm install firebase-admin nodemailer
-        
-      - name: Run report
+      - run: npm install firebase-admin nodemailer
+      - run: node firebase-report.js
         env:
           FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
           GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
           BOSS_EMAIL: ${{ secrets.BOSS_EMAIL }}
           SENDER_EMAIL: ${{ secrets.SENDER_EMAIL }}
-        run: node firebase-report.js
