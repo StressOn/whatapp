@@ -12,11 +12,11 @@ function getYesterdayIST() {
   const now = new Date();
   const istOffset = 330 * 60 * 1000; // 5.5 hours in milliseconds
   const yesterday = new Date(now - 86400000 + istOffset);
-  
+
   return {
     start: Math.floor(yesterday.setHours(0, 0, 0, 0) / 1000),
     end: Math.floor(yesterday.setHours(23, 59, 59, 999) / 1000),
-    dateString: yesterday.toLocaleDateString('en-IN', {timeZone: 'Asia/Kolkata'})
+    dateString: yesterday.toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata' })
   };
 }
 
@@ -30,21 +30,37 @@ async function getYesterdayProduction() {
     .endAt(end)
     .once('value');
 
-  const readings = Object.values(snapshot.val() || {});
-  const totalLength = readings.reduce((sum, r) => sum + (r.length || 0), 0);
+  const readingsObj = snapshot.val() || {};
+
+  const readings = Object.entries(readingsObj)
+    .map(([key, value]) => ({ key, ...value }))
+    .sort((a, b) => a.timestamp - b.timestamp);
+
+  if (readings.length === 0) {
+    return {
+      date: dateString,
+      totalLength: 0,
+      readingCount: 0,
+      sampleData: []
+    };
+  }
+
+  const firstLength = readings[0].length || 0;
+  const lastLength = readings[readings.length - 1].length || 0;
+  const totalLength = lastLength - firstLength;
 
   return {
     date: dateString,
-    totalLength,
+    totalLength: totalLength < 0 ? 0 : totalLength,
     readingCount: readings.length,
-    sampleData: readings.slice(0, 3) // First 3 readings for verification
+    sampleData: readings.slice(0, 3)
   };
 }
 
 async function sendReport() {
   try {
     const { date, totalLength, readingCount, sampleData } = await getYesterdayProduction();
-    
+
     const transporter = nodemailer.createTransport({
       service: 'gmail',
       auth: {
@@ -69,7 +85,7 @@ async function sendReport() {
       `
     });
 
-    console.log(`✅ Report sent at ${new Date().toLocaleString('en-IN', {timeZone: 'Asia/Kolkata'})}`);
+    console.log(`✅ Report sent at ${new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })}`);
   } catch (err) {
     console.error('❌ Report failed:', err);
     process.exit(1);
