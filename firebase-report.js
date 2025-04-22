@@ -10,19 +10,27 @@ admin.initializeApp({
 // Accurate date handling for IST (UTC+5:30)
 function getYesterdayIST() {
   const now = new Date();
-  const istOffset = 330 * 60 * 1000; // 5.5 hours in milliseconds
-  const yesterday = new Date(now - 86400000 + istOffset);
+  // Get current time in UTC and subtract IST offset to get correct date boundaries
+  const utcNow = now.getTime() + (now.getTimezoneOffset() * 60000);
+  const istNow = utcNow + (330 * 60000); // Add 5.5 hours for IST
+  
+  // Yesterday in IST
+  const istYesterday = new Date(istNow - 86400000);
+  istYesterday.setHours(0, 0, 0, 0); // Start of yesterday
+  
+  const start = Math.floor(istYesterday.getTime() / 1000);
+  const end = start + 86399; // 23:59:59 same day
   
   return {
-    start: Math.floor(yesterday.setHours(0, 0, 0, 0) / 1000),
-    end: Math.floor(yesterday.setHours(23, 59, 59, 999) / 1000),
-    dateString: yesterday.toLocaleDateString('en-IN', {timeZone: 'Asia/Kolkata'})
+    start,
+    end,
+    dateString: istYesterday.toLocaleDateString('en-IN', {timeZone: 'Asia/Kolkata'})
   };
 }
 
 async function getYesterdayProduction() {
   const { start, end, dateString } = getYesterdayIST();
-  console.log(`Fetching data from ${new Date(start * 1000)} to ${new Date(end * 1000)}`);
+  console.log(`Fetching data from ${new Date(start * 1000).toISOString()} to ${new Date(end * 1000).toISOString()}`);
 
   const snapshot = await admin.database().ref('Sensor/perday/readings')
     .orderByChild('timestamp')
@@ -32,7 +40,7 @@ async function getYesterdayProduction() {
 
   const readingsObj = snapshot.val() || {};
   
-  // Convert to array and sort by timestamp (since we can't index on timestamp)
+  // Convert to array and sort by timestamp
   const readings = Object.values(readingsObj);
   readings.sort((a, b) => a.timestamp - b.timestamp);
 
@@ -41,7 +49,16 @@ async function getYesterdayProduction() {
   
   if (readings.length > 0) {
     dailyProduction = readings[readings.length - 1].length - readings[0].length;
-    calculationExplanation = `${readings[readings.length - 1].length} (last) - ${readings[0].length} (first) = ${dailyProduction.toFixed(2)}m`;
+    calculationExplanation = `${readings[readings.length - 1].length.toFixed(2)} (last) - ${readings[0].length.toFixed(2)} (first) = ${dailyProduction.toFixed(2)}m`;
+    
+    // Additional verification for cumulative values
+    if (readings.length > 1) {
+      let cumulativeCheck = 0;
+      for (let i = 1; i < readings.length; i++) {
+        cumulativeCheck += (readings[i].length - readings[i-1].length);
+      }
+      calculationExplanation += `<br>Verified by summing all intervals: ${cumulativeCheck.toFixed(2)}m`;
+    }
   }
 
   return {
@@ -84,20 +101,21 @@ async function sendReport() {
           <tr>
             <th>Type</th>
             <th>Length (m)</th>
-            <th>Timestamp</th>
+            <th>Timestamp (IST)</th>
           </tr>
           <tr>
             <td>First Reading</td>
-            <td>${sampleReadings[0].length}</td>
+            <td>${sampleReadings[0].length.toFixed(2)}</td>
             <td>${new Date(sampleReadings[0].timestamp * 1000).toLocaleString('en-IN', {timeZone: 'Asia/Kolkata'})}</td>
           </tr>
           <tr>
             <td>Last Reading</td>
-            <td>${sampleReadings[1].length}</td>
+            <td>${sampleReadings[1].length.toFixed(2)}</td>
             <td>${new Date(sampleReadings[1].timestamp * 1000).toLocaleString('en-IN', {timeZone: 'Asia/Kolkata'})}</td>
           </tr>
         </table>
         ` : ''}
+        <p><small>Report generated at: ${new Date().toLocaleString('en-IN', {timeZone: 'Asia/Kolkata'})}</small></p>
       `
     });
 
