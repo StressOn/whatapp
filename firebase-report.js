@@ -12,11 +12,11 @@ function getYesterdayIST() {
   const now = new Date();
   const istOffset = 330 * 60 * 1000; // 5.5 hours in milliseconds
   const yesterday = new Date(now - 86400000 + istOffset);
-
+  
   return {
     start: Math.floor(yesterday.setHours(0, 0, 0, 0) / 1000),
     end: Math.floor(yesterday.setHours(23, 59, 59, 999) / 1000),
-    dateString: yesterday.toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata' })
+    dateString: yesterday.toLocaleDateString('en-IN', {timeZone: 'Asia/Kolkata'})
   };
 }
 
@@ -31,36 +31,32 @@ async function getYesterdayProduction() {
     .once('value');
 
   const readingsObj = snapshot.val() || {};
+  
+  // Convert to array and sort by timestamp (since we can't index on timestamp)
+  const readings = Object.values(readingsObj);
+  readings.sort((a, b) => a.timestamp - b.timestamp);
 
-  const readings = Object.entries(readingsObj)
-    .map(([key, value]) => ({ key, ...value }))
-    .sort((a, b) => a.timestamp - b.timestamp);
-
-  if (readings.length === 0) {
-    return {
-      date: dateString,
-      totalLength: 0,
-      readingCount: 0,
-      sampleData: []
-    };
+  let dailyProduction = 0;
+  let calculationExplanation = "No readings found for this date";
+  
+  if (readings.length > 0) {
+    dailyProduction = readings[readings.length - 1].length - readings[0].length;
+    calculationExplanation = `${readings[readings.length - 1].length} (last) - ${readings[0].length} (first) = ${dailyProduction.toFixed(2)}m`;
   }
-
-  const firstLength = readings[0].length || 0;
-  const lastLength = readings[readings.length - 1].length || 0;
-  const totalLength = lastLength - firstLength;
 
   return {
     date: dateString,
-    totalLength: totalLength < 0 ? 0 : totalLength,
+    dailyProduction,
     readingCount: readings.length,
-    sampleData: readings.slice(0, 3)
+    calculationExplanation,
+    sampleReadings: readings.length > 0 ? [readings[0], readings[readings.length - 1]] : []
   };
 }
 
 async function sendReport() {
   try {
-    const { date, totalLength, readingCount, sampleData } = await getYesterdayProduction();
-
+    const { date, dailyProduction, readingCount, calculationExplanation, sampleReadings } = await getYesterdayProduction();
+    
     const transporter = nodemailer.createTransport({
       service: 'gmail',
       auth: {
@@ -77,15 +73,35 @@ async function sendReport() {
         <h1 style="color:#2e86c1;">Production Summary</h1>
         <h3>Date: ${date}</h3>
         <table border="1" cellpadding="8" style="border-collapse:collapse;">
-          <tr><th>Total Length</th><td>${totalLength.toFixed(2)} meters</td></tr>
+          <tr><th>Daily Production</th><td>${dailyProduction.toFixed(2)} meters</td></tr>
           <tr><th>Total Readings</th><td>${readingCount}</td></tr>
         </table>
-        <h4>Sample Data Verification:</h4>
-        <pre>${JSON.stringify(sampleData, null, 2)}</pre>
+        <h4>Calculation Method:</h4>
+        <p>${calculationExplanation}</p>
+        ${sampleReadings.length > 0 ? `
+        <h4>Key Readings:</h4>
+        <table border="1" cellpadding="8" style="border-collapse:collapse;">
+          <tr>
+            <th>Type</th>
+            <th>Length (m)</th>
+            <th>Timestamp</th>
+          </tr>
+          <tr>
+            <td>First Reading</td>
+            <td>${sampleReadings[0].length}</td>
+            <td>${new Date(sampleReadings[0].timestamp * 1000).toLocaleString('en-IN', {timeZone: 'Asia/Kolkata'})}</td>
+          </tr>
+          <tr>
+            <td>Last Reading</td>
+            <td>${sampleReadings[1].length}</td>
+            <td>${new Date(sampleReadings[1].timestamp * 1000).toLocaleString('en-IN', {timeZone: 'Asia/Kolkata'})}</td>
+          </tr>
+        </table>
+        ` : ''}
       `
     });
 
-    console.log(`✅ Report sent at ${new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })}`);
+    console.log(`✅ Report sent at ${new Date().toLocaleString('en-IN', {timeZone: 'Asia/Kolkata'})}`);
   } catch (err) {
     console.error('❌ Report failed:', err);
     process.exit(1);
