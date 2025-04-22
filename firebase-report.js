@@ -4,33 +4,35 @@ const nodemailer = require('nodemailer');
 // Initialize Firebase
 admin.initializeApp({
   credential: admin.credential.cert(JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT)),
-  databaseURL: "https://customer-2-88220-default-rtdb.firebaseio.com"
+  databaseURL: "https://customer-2-88220-default-rtdb.firebaseio.com/"
 });
 
-// Accurate date handling for IST (UTC+5:30)
+// Get exact IST date boundaries for yesterday
 function getYesterdayIST() {
+  // Current time in IST (UTC+5:30)
   const now = new Date();
-  // Get current time in UTC and subtract IST offset to get correct date boundaries
-  const utcNow = now.getTime() + (now.getTimezoneOffset() * 60000);
-  const istNow = utcNow + (330 * 60000); // Add 5.5 hours for IST
+  const istOffset = 5.5 * 60 * 60 * 1000; // IST offset in milliseconds
+  const nowIST = new Date(now.getTime() + istOffset);
   
   // Yesterday in IST
-  const istYesterday = new Date(istNow - 86400000);
-  istYesterday.setHours(0, 0, 0, 0); // Start of yesterday
+  const yesterdayIST = new Date(nowIST);
+  yesterdayIST.setDate(nowIST.getDate() - 1);
+  yesterdayIST.setHours(0, 0, 0, 0);
   
-  const start = Math.floor(istYesterday.getTime() / 1000);
+  const start = Math.floor(yesterdayIST.getTime() / 1000);
   const end = start + 86399; // 23:59:59 same day
   
   return {
     start,
     end,
-    dateString: istYesterday.toLocaleDateString('en-IN', {timeZone: 'Asia/Kolkata'})
+    dateString: yesterdayIST.toLocaleDateString('en-IN', {timeZone: 'Asia/Kolkata'})
   };
 }
 
-async function getYesterdayProduction() {
+async function getDailyProduction() {
   const { start, end, dateString } = getYesterdayIST();
-  console.log(`Fetching data from ${new Date(start * 1000).toISOString()} to ${new Date(end * 1000).toISOString()}`);
+  
+  console.log(`Querying range: ${new Date(start * 1000).toLocaleString('en-IN')} (${start}) to ${new Date(end * 1000).toLocaleString('en-IN')} (${end})`);
 
   const snapshot = await admin.database().ref('Sensor/perday/readings')
     .orderByChild('timestamp')
@@ -39,40 +41,34 @@ async function getYesterdayProduction() {
     .once('value');
 
   const readingsObj = snapshot.val() || {};
-  
-  // Convert to array and sort by timestamp
   const readings = Object.values(readingsObj);
   readings.sort((a, b) => a.timestamp - b.timestamp);
 
+  console.log(`Found ${readings.length} readings for ${dateString}`);
+  readings.forEach(r => {
+    console.log(`- ${r.length}m at ${new Date(r.timestamp * 1000).toLocaleString('en-IN')} (${r.timestamp})`);
+  });
+
   let dailyProduction = 0;
-  let calculationExplanation = "No readings found for this date";
+  let calculation = "No readings found";
   
   if (readings.length > 0) {
     dailyProduction = readings[readings.length - 1].length - readings[0].length;
-    calculationExplanation = `${readings[readings.length - 1].length.toFixed(2)} (last) - ${readings[0].length.toFixed(2)} (first) = ${dailyProduction.toFixed(2)}m`;
-    
-    // Additional verification for cumulative values
-    if (readings.length > 1) {
-      let cumulativeCheck = 0;
-      for (let i = 1; i < readings.length; i++) {
-        cumulativeCheck += (readings[i].length - readings[i-1].length);
-      }
-      calculationExplanation += `<br>Verified by summing all intervals: ${cumulativeCheck.toFixed(2)}m`;
-    }
+    calculation = `${readings[readings.length - 1].length.toFixed(2)} (last) - ${readings[0].length.toFixed(2)} (first) = ${dailyProduction.toFixed(2)}m`;
   }
 
   return {
     date: dateString,
     dailyProduction,
     readingCount: readings.length,
-    calculationExplanation,
+    calculation,
     sampleReadings: readings.length > 0 ? [readings[0], readings[readings.length - 1]] : []
   };
 }
 
 async function sendReport() {
   try {
-    const { date, dailyProduction, readingCount, calculationExplanation, sampleReadings } = await getYesterdayProduction();
+    const { date, dailyProduction, readingCount, calculation, sampleReadings } = await getDailyProduction();
     
     const transporter = nodemailer.createTransport({
       service: 'gmail',
@@ -83,45 +79,47 @@ async function sendReport() {
     });
 
     await transporter.sendMail({
-      from: `"Daily Production Report" <${process.env.SENDER_EMAIL}>`,
+      from: `"Production Report" <${process.env.SENDER_EMAIL}>`,
       to: process.env.BOSS_EMAIL,
-      subject: `📊 Production Report for ${date}`,
+      subject: `📊 Production for ${date}`,
       html: `
-        <h1 style="color:#2e86c1;">Production Summary</h1>
-        <h3>Date: ${date}</h3>
-        <table border="1" cellpadding="8" style="border-collapse:collapse;">
-          <tr><th>Daily Production</th><td>${dailyProduction.toFixed(2)} meters</td></tr>
-          <tr><th>Total Readings</th><td>${readingCount}</td></tr>
+        <h1>Production Summary - ${date}</h1>
+        <table border="1" cellpadding="8">
+          <tr><th>Total Production</th><td>${dailyProduction.toFixed(2)} meters</td></tr>
+          <tr><th>Readings Count</th><td>${readingCount}</td></tr>
         </table>
-        <h4>Calculation Method:</h4>
-        <p>${calculationExplanation}</p>
+        <h3>Calculation:</h3>
+        <p>${calculation}</p>
         ${sampleReadings.length > 0 ? `
-        <h4>Key Readings:</h4>
-        <table border="1" cellpadding="8" style="border-collapse:collapse;">
+        <h3>Key Readings:</h3>
+        <table border="1" cellpadding="8">
           <tr>
             <th>Type</th>
-            <th>Length (m)</th>
-            <th>Timestamp (IST)</th>
+            <th>Length</th>
+            <th>Time (IST)</th>
+            <th>Timestamp</th>
           </tr>
           <tr>
-            <td>First Reading</td>
-            <td>${sampleReadings[0].length.toFixed(2)}</td>
-            <td>${new Date(sampleReadings[0].timestamp * 1000).toLocaleString('en-IN', {timeZone: 'Asia/Kolkata'})}</td>
+            <td>First</td>
+            <td>${sampleReadings[0].length.toFixed(2)}m</td>
+            <td>${new Date(sampleReadings[0].timestamp * 1000).toLocaleString('en-IN')}</td>
+            <td>${sampleReadings[0].timestamp}</td>
           </tr>
           <tr>
-            <td>Last Reading</td>
-            <td>${sampleReadings[1].length.toFixed(2)}</td>
-            <td>${new Date(sampleReadings[1].timestamp * 1000).toLocaleString('en-IN', {timeZone: 'Asia/Kolkata'})}</td>
+            <td>Last</td>
+            <td>${sampleReadings[1].length.toFixed(2)}m</td>
+            <td>${new Date(sampleReadings[1].timestamp * 1000).toLocaleString('en-IN')}</td>
+            <td>${sampleReadings[1].timestamp}</td>
           </tr>
         </table>
         ` : ''}
-        <p><small>Report generated at: ${new Date().toLocaleString('en-IN', {timeZone: 'Asia/Kolkata'})}</small></p>
+        <p><small>Report generated at: ${new Date().toLocaleString('en-IN')}</small></p>
       `
     });
 
-    console.log(`✅ Report sent at ${new Date().toLocaleString('en-IN', {timeZone: 'Asia/Kolkata'})}`);
+    console.log(`✅ Report sent for ${date}`);
   } catch (err) {
-    console.error('❌ Report failed:', err);
+    console.error('❌ Failed:', err);
     process.exit(1);
   }
 }
