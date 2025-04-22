@@ -20,59 +20,98 @@ function toIST(timestamp) {
   });
 }
 
-// Get exact IST boundaries for yesterday (21/04/2025)
-function getYesterdayRange() {
-  // Manually set to 21 April 2025 in IST
-  const start = new Date('2025-04-21T00:00:00+05:30');
-  const end = new Date('2025-04-21T23:59:59+05:30');
+// Get ideal and extended ranges for yesterday (21/04/2025)
+function getDateRanges() {
+  // Ideal day boundaries (21/04/2025 00:00:00 to 23:59:59 IST)
+  const idealStart = 1743638400; // 21/04/2025 00:00:00 IST
+  const idealEnd = 1743724799;   // 21/04/2025 23:59:59 IST
+  
+  // Extended search window (12 hours before to 12 hours after)
+  const searchStart = idealStart - 43200; // 20/04/2025 12:00:00 IST
+  const searchEnd = idealEnd + 43200;    // 22/04/2025 11:59:59 IST
   
   return {
-    start: Math.floor(start.getTime() / 1000), // 1743638400
-    end: Math.floor(end.getTime() / 1000),    // 1743724799
-    dateString: start.toLocaleDateString('en-IN', {timeZone: 'Asia/Kolkata'})
+    ideal: { start: idealStart, end: idealEnd },
+    search: { start: searchStart, end: searchEnd },
+    dateString: new Date(idealStart * 1000).toLocaleDateString('en-IN', {timeZone: 'Asia/Kolkata'})
   };
 }
 
-async function getProductionData() {
-  const { start, end, dateString } = getYesterdayRange();
+async function findClosestReadings() {
+  const { ideal, search, dateString } = getDateRanges();
   
-  console.log(`Fetching data for ${dateString} (${start} to ${end})`);
+  console.log(`Searching for readings near ${dateString}`);
+  console.log(`Ideal range: ${toIST(ideal.start)} to ${toIST(ideal.end)}`);
+  console.log(`Search window: ${toIST(search.start)} to ${toIST(search.end)}`);
 
+  // Get all readings in the extended search window
   const snapshot = await admin.database().ref('Sensor/perday/readings')
     .orderByChild('timestamp')
-    .startAt(start)
-    .endAt(end)
+    .startAt(search.start)
+    .endAt(search.end)
     .once('value');
 
-  const readings = snapshot.val() ? Object.values(snapshot.val()) : [];
-  readings.sort((a, b) => a.timestamp - b.timestamp);
+  const allReadings = snapshot.val() ? Object.values(snapshot.val()) : [];
+  allReadings.sort((a, b) => a.timestamp - b.timestamp);
 
-  console.log(`Found ${readings.length} readings:`);
-  readings.forEach(r => console.log(`- ${r.length}m at ${toIST(r.timestamp)}`));
+  console.log(`Found ${allReadings.length} readings in search window`);
 
-  let production = 0;
-  let calculation = "No readings found";
+  // Find first reading after day start and last before day end
+  const dayReadings = allReadings.filter(r => 
+    r.timestamp >= ideal.start && r.timestamp <= ideal.end
+  );
+
+  // If no readings in ideal day, use closest available
+  const firstReading = dayReadings[0] || 
+    allReadings.find(r => r.timestamp > ideal.start) || 
+    allReadings[allReadings.length - 1];
   
-  if (readings.length >= 2) {
-    production = readings[readings.length - 1].length - readings[0].length;
-    calculation = `Production = ${readings[readings.length - 1].length.toFixed(2)} (last) - ${readings[0].length.toFixed(2)} (first) = ${production.toFixed(2)}m`;
-  } else if (readings.length === 1) {
-    calculation = `Only one reading found: ${readings[0].length}m - cannot calculate daily production`;
+  const lastReading = dayReadings[dayReadings.length - 1] || 
+    allReadings.reverse().find(r => r.timestamp < ideal.end) || 
+    allReadings[0];
+
+  return {
+    dateString,
+    firstReading,
+    lastReading,
+    allReadings,
+    dayReadings,
+    usedFallback: dayReadings.length === 0
+  };
+}
+
+async function calculateProduction() {
+  const { dateString, firstReading, lastReading, dayReadings, usedFallback } = await findClosestReadings();
+  
+  let production = 0;
+  let calculation = "No usable readings found";
+  let warning = "";
+
+  if (firstReading && lastReading) {
+    production = lastReading.length - firstReading.length;
+    
+    if (usedFallback) {
+      warning = "⚠️ Used nearest available readings (device may have been offline)";
+    }
+    
+    calculation = `Production = ${lastReading.length.toFixed(2)} (${toIST(lastReading.timestamp)}) - ${firstReading.length.toFixed(2)} (${toIST(firstReading.timestamp)}) = ${production.toFixed(2)}m`;
   }
 
   return {
     date: dateString,
     production: production.toFixed(2),
     calculation,
-    firstReading: readings[0],
-    lastReading: readings[readings.length - 1],
-    totalReadings: readings.length
+    warning,
+    firstReading,
+    lastReading,
+    readingsInDay: dayReadings.length,
+    totalReadingsFound: dayReadings.length
   };
 }
 
 async function sendReport() {
   try {
-    const { date, production, calculation, firstReading, lastReading, totalReadings } = await getProductionData();
+    const { date, production, calculation, warning, firstReading, lastReading, readingsInDay } = await calculateProduction();
     
     const transporter = nodemailer.createTransport({
       service: 'gmail',
@@ -88,13 +127,14 @@ async function sendReport() {
       subject: `📊 Daily Production - ${date}`,
       html: `
         <h1 style="color:#2e86c1;">Production Report - ${date}</h1>
+        ${warning ? `<div style="background:#f39c12;padding:10px;border-radius:5px;margin-bottom:15px;">${warning}</div>` : ''}
         
         <table border="1" cellpadding="8" style="border-collapse:collapse;margin-bottom:20px;">
           <tr><th>Total Production</th><td><strong>${production} meters</strong></td></tr>
-          <tr><th>Readings Processed</th><td>${totalReadings}</td></tr>
+          <tr><th>Readings in Day</th><td>${readingsInDay}</td></tr>
         </table>
         
-        <h3 style="color:#2874a6;">Calculation Method</h3>
+        <h3 style="color:#2874a6;">Calculation</h3>
         <p>${calculation}</p>
         
         ${firstReading ? `
@@ -103,8 +143,8 @@ async function sendReport() {
           <tr>
             <th></th>
             <th>Length (m)</th>
-            <th>Timestamp (IST)</th>
-            <th>Unix Time</th>
+            <th>Time (IST)</th>
+            <th>Timestamp</th>
           </tr>
           <tr>
             <td><strong>First</strong></td>
