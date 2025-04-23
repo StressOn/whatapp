@@ -10,130 +10,85 @@ admin.initializeApp({
 // CONSTANTS
 const IST_OFFSET = 5.5 * 60 * 60 * 1000; // IST is UTC+5:30 in milliseconds
 
-// Convert timestamp to IST string with full details
-function toDetailedIST(timestamp) {
-  const date = new Date(timestamp * 1000);
-  return date.toLocaleString('en-IN', {
+// Convert timestamp to IST string
+function toIST(timestamp) {
+  return new Date(timestamp * 1000).toLocaleString('en-IN', {
     timeZone: 'Asia/Kolkata',
-    weekday: 'short',
     day: '2-digit',
-    month: 'short',
+    month: '2-digit',
     year: 'numeric',
     hour: '2-digit',
     minute: '2-digit',
-    second: '2-digit',
-    hour12: true
+    second: '2-digit'
   });
 }
 
-// Get precise date range for yesterday in IST
-function getYesterdayRange() {
-  const now = new Date();
-  const nowUTC = now.getTime() + (now.getTimezoneOffset() * 60000);
-  const nowIST = new Date(nowUTC + IST_OFFSET);
-  
-  // Yesterday in IST
-  const yesterdayIST = new Date(nowIST);
-  yesterdayIST.setDate(nowIST.getDate() - 1);
-  
-  // Start of yesterday (00:00:00)
-  const start = new Date(yesterdayIST);
-  start.setHours(0, 0, 0, 0);
-  
-  // End of yesterday (23:59:59)
-  const end = new Date(yesterdayIST);
-  end.setHours(23, 59, 59, 999);
-  
-  return {
-    start: Math.floor(start.getTime() / 1000),
-    end: Math.floor(end.getTime() / 1000),
-    dateString: yesterdayIST.toLocaleDateString('en-IN', {timeZone: 'Asia/Kolkata'})
-  };
+// Get all readings (for testing)
+async function getAllReadings() {
+  const snapshot = await admin.database().ref('Sensor/perday/readings')
+    .orderByChild('timestamp')
+    .once('value');
+  return snapshot.val() ? Object.values(snapshot.val()) : [];
 }
 
-async function fetchProductionData() {
-  const { start, end, dateString } = getYesterdayRange();
+// Get production data with fallback to current readings
+async function getProductionData() {
+  // Get yesterday's date in IST
+  const now = new Date();
+  const yesterdayIST = new Date(now.getTime() + IST_OFFSET - 86400000);
+  const dateString = yesterdayIST.toLocaleDateString('en-IN', {timeZone: 'Asia/Kolkata'});
   
-  console.log(`\n=== FETCHING DATA FOR ${dateString} ===`);
-  console.log(`Exact range in IST: ${toDetailedIST(start)} to ${toDetailedIST(end)}`);
-  console.log(`Timestamp range: ${start} to ${end}\n`);
+  // 1. Try to get yesterday's readings first
+  const yesterdayStart = Math.floor(yesterdayIST.setHours(0,0,0,0) / 1000);
+  const yesterdayEnd = yesterdayStart + 86399;
+  
+  console.log(`Fetching yesterday's data (${dateString}): ${yesterdayStart} to ${yesterdayEnd}`);
+  
+  const yesterdaySnapshot = await admin.database().ref('Sensor/perday/readings')
+    .orderByChild('timestamp')
+    .startAt(yesterdayStart)
+    .endAt(yesterdayEnd)
+    .once('value');
 
-  try {
-    const snapshot = await admin.database().ref('Sensor/perday/readings')
-      .orderByChild('timestamp')
-      .startAt(start)
-      .endAt(end)
-      .once('value');
+  let readings = yesterdaySnapshot.val() ? Object.values(yesterdaySnapshot.val()) : [];
+  readings.sort((a, b) => a.timestamp - b.timestamp);
 
-    const readings = snapshot.val() ? Object.values(snapshot.val()) : [];
-    readings.sort((a, b) => a.timestamp - b.timestamp);
+  console.log(`Found ${readings.length} readings for ${dateString}`);
 
-    console.log(`Found ${readings.length} readings within exact range:`);
-    readings.forEach(r => {
-      console.log(`- ${r.length}m at ${toDetailedIST(r.timestamp)} (${r.timestamp})`);
-    });
-
-    // If no readings in exact range, search wider window
-    if (readings.length === 0) {
-      const widerStart = start - 86400; // 24 hours before
-      const widerEnd = end + 86400;    // 24 hours after
-      
-      console.log(`\nNo readings found in exact range. Searching wider window (${widerStart} to ${widerEnd})`);
-      
-      const widerSnapshot = await admin.database().ref('Sensor/perday/readings')
-        .orderByChild('timestamp')
-        .startAt(widerStart)
-        .endAt(widerEnd)
-        .once('value');
-
-      const widerReadings = widerSnapshot.val() ? Object.values(widerSnapshot.val()) : [];
-      widerReadings.sort((a, b) => a.timestamp - b.timestamp);
-
-      console.log(`Found ${widerReadings.length} readings in wider window:`);
-      widerReadings.forEach(r => {
-        console.log(`- ${r.length}m at ${toDetailedIST(r.timestamp)} (${r.timestamp})`);
-      });
-
-      return {
-        dateString,
-        readings: widerReadings,
-        usedWiderRange: true,
-        exactRangeReadings: 0
-      };
+  // 2. If no readings, try to get the most recent readings (TESTING MODE)
+  if (readings.length === 0) {
+    console.log('No readings found for yesterday, checking latest readings...');
+    const allReadings = await getAllReadings();
+    if (allReadings.length > 0) {
+      readings = [allReadings[0], allReadings[allReadings.length - 1]];
+      console.log(`Using latest readings instead: ${readings.length} samples`);
     }
-
-    return {
-      dateString,
-      readings,
-      usedWiderRange: false,
-      exactRangeReadings: readings.length
-    };
-  } catch (error) {
-    console.error('Database error:', error);
-    throw error;
   }
+
+  return {
+    dateString,
+    readings,
+    isLiveData: readings.length > 0 && (readings[0].timestamp < yesterdayStart || readings[0].timestamp > yesterdayEnd)
+  };
 }
 
 async function generateReport() {
   try {
-    const { dateString, readings, usedWiderRange, exactRangeReadings } = await fetchProductionData();
+    const { dateString, readings, isLiveData } = await getProductionData();
     
     let production = 0;
-    let calculation = "No readings available";
-    let warning = "";
+    let calculation = "No production data available";
     let firstReading = null;
     let lastReading = null;
 
-    if (readings.length > 0) {
+    if (readings.length >= 2) {
       firstReading = readings[0];
       lastReading = readings[readings.length - 1];
       production = lastReading.length - firstReading.length;
-      
-      calculation = `Production = ${lastReading.length.toFixed(2)}m (${toDetailedIST(lastReading.timestamp)}) - ${firstReading.length.toFixed(2)}m (${toDetailedIST(firstReading.timestamp)}) = ${production.toFixed(2)}m`;
-      
-      if (usedWiderRange) {
-        warning = `⚠️ Used nearest available readings (${exactRangeReadings} readings found in exact date range)`;
-      }
+      calculation = `Production = ${lastReading.length.toFixed(2)}m (${toIST(lastReading.timestamp)}) - ${firstReading.length.toFixed(2)}m (${toIST(firstReading.timestamp)}) = ${production.toFixed(2)}m`;
+    } else if (readings.length === 1) {
+      firstReading = lastReading = readings[0];
+      calculation = `Only one reading found: ${firstReading.length.toFixed(2)}m at ${toIST(firstReading.timestamp)}`;
     }
 
     // Email content
@@ -148,65 +103,60 @@ async function generateReport() {
     await transporter.sendMail({
       from: `"Production Report" <${process.env.SENDER_EMAIL}>`,
       to: process.env.BOSS_EMAIL,
-      subject: `📊 Production Report - ${dateString}`,
+      subject: `📊 ${isLiveData ? 'LIVE ' : ''}Production Report - ${dateString}`,
       html: `
-        <style>
-          .header { color: #2c3e50; }
-          .warning { background: #f39c12; padding: 10px; border-radius: 5px; }
-          table { border-collapse: collapse; margin: 15px 0; width: 100%; }
-          th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
-          th { background-color: #f2f2f2; }
-          .footer { color: #7f8c8d; font-size: 0.9em; }
-        </style>
-
-        <h1 class="header">Production Report - ${dateString}</h1>
+        <h1 style="color:#2e86c1;">${isLiveData ? 'LIVE ' : ''}Production Report - ${dateString}</h1>
+        ${isLiveData ? `<div style="background:#f39c12;padding:10px;border-radius:5px;margin-bottom:15px;">
+          ⚠️ Using latest available readings (no data found for exact date)
+        </div>` : ''}
         
-        ${warning ? `<div class="warning">${warning}</div>` : ''}
-        
-        <table>
+        <table border="1" cellpadding="8" style="border-collapse:collapse;margin-bottom:20px;">
           <tr><th>Total Production</th><td><strong>${production.toFixed(2)} meters</strong></td></tr>
-          <tr><th>Readings Processed</th><td>${readings.length}</td></tr>
-          <tr><th>Exact Date Range Readings</th><td>${exactRangeReadings}</td></tr>
+          <tr><th>Readings Used</th><td>${readings.length}</td></tr>
         </table>
         
-        <h2 class="header">Calculation Method</h2>
-        <p>${calculation || 'No calculation possible'}</p>
+        <h3 style="color:#2874a6;">Calculation Method</h3>
+        <p>${calculation}</p>
         
         ${firstReading ? `
-        <h2 class="header">Key Readings</h2>
-        <table>
+        <h3 style="color:#2874a6;">Key Readings</h3>
+        <table border="1" cellpadding="8" style="border-collapse:collapse;">
           <tr>
             <th>Reading</th>
             <th>Length (m)</th>
-            <th>Timestamp (IST)</th>
-            <th>Unix Time</th>
+            <th>Time (IST)</th>
+            <th>Timestamp</th>
           </tr>
           <tr>
-            <td>First Available</td>
+            <td>${readings.length === 1 ? 'Only' : 'First'} Reading</td>
             <td>${firstReading.length.toFixed(2)}</td>
-            <td>${toDetailedIST(firstReading.timestamp)}</td>
+            <td>${toIST(firstReading.timestamp)}</td>
             <td>${firstReading.timestamp}</td>
           </tr>
+          ${readings.length > 1 ? `
           <tr>
-            <td>Last Available</td>
+            <td>Last Reading</td>
             <td>${lastReading.length.toFixed(2)}</td>
-            <td>${toDetailedIST(lastReading.timestamp)}</td>
+            <td>${toIST(lastReading.timestamp)}</td>
             <td>${lastReading.timestamp}</td>
           </tr>
+          ` : ''}
         </table>
         ` : ''}
         
-        <p class="footer">Report generated at: ${new Date().toLocaleString('en-IN', {timeZone: 'Asia/Kolkata'})}</p>
+        <p style="margin-top:20px;color:#7f8c8d;">
+          <small>Report generated at: ${new Date().toLocaleString('en-IN', {timeZone: 'Asia/Kolkata'})}</small>
+        </p>
       `
     });
 
-    console.log(`\n✅ REPORT SUMMARY FOR ${dateString}`);
-    console.log(`- Production: ${production.toFixed(2)} meters`);
-    console.log(`- Readings used: ${readings.length}`);
+    console.log(`\n✅ REPORT GENERATED FOR ${dateString}`);
+    console.log(`- Production: ${production.toFixed(2)}m`);
     console.log(`- Calculation: ${calculation}`);
-    if (warning) console.log(`- Warning: ${warning}`);
+    if (isLiveData) console.log('- ⚠️ Used live readings instead of historical data');
+
   } catch (error) {
-    console.error('\n❌ REPORT GENERATION FAILED:', error);
+    console.error('\n❌ REPORT FAILED:', error);
     process.exit(1);
   }
 }
