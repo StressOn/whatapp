@@ -23,27 +23,20 @@ function toIST(timestamp) {
   });
 }
 
-// Get all readings (for testing)
-async function getAllReadings() {
-  const snapshot = await admin.database().ref('Sensor/readings')
-    .orderByChild('timestamp')
-    .once('value');
-  return snapshot.val() ? Object.values(snapshot.val()) : [];
-}
-
-// Get production data with fallback to current readings
+// Get production data for a specific date
 async function getProductionData() {
   // Get yesterday's date in IST
   const now = new Date();
-  const yesterdayIST = new Date(now.getTime() + IST_OFFSET - 86400000);
+  const yesterdayIST = new Date(now.getTime() - 86400000); // Subtract 24 hours
   const dateString = yesterdayIST.toLocaleDateString('en-IN', {timeZone: 'Asia/Kolkata'});
   
-  // 1. Try to get yesterday's readings first
-  const yesterdayStart = Math.floor(yesterdayIST.setHours(0,0,0,0) / 1000);
-  const yesterdayEnd = yesterdayStart + 86399;
+  // Calculate timestamp range for yesterday in IST
+  const yesterdayStart = Math.floor(new Date(yesterdayIST).setHours(0, 0, 0, 0) / 1000;
+  const yesterdayEnd = Math.floor(new Date(yesterdayIST).setHours(23, 59, 59, 999) / 1000;
   
   console.log(`Fetching yesterday's data (${dateString}): ${yesterdayStart} to ${yesterdayEnd}`);
   
+  // 1. Try to get yesterday's readings from the perday collection
   const yesterdaySnapshot = await admin.database().ref('Sensor/perday/readings')
     .orderByChild('timestamp')
     .startAt(yesterdayStart)
@@ -55,29 +48,33 @@ async function getProductionData() {
 
   console.log(`Found ${readings.length} readings for ${dateString}`);
 
-  // 2. If no readings, try to get the most recent readings (TESTING MODE)
+  // 2. If no readings in perday, check the regular readings collection
   if (readings.length === 0) {
-    console.log('No readings found for yesterday, checking latest readings...');
-    const allReadings = await getAllReadings();
-    if (allReadings.length > 0) {
-      readings = [allReadings[0], allReadings[allReadings.length - 1]];
-      console.log(`Using latest readings instead: ${readings.length} samples`);
-    }
+    console.log('No readings found in perday, checking regular readings collection...');
+    const regularSnapshot = await admin.database().ref('Sensor/readings')
+      .orderByChild('timestamp')
+      .startAt(yesterdayStart)
+      .endAt(yesterdayEnd)
+      .once('value');
+    
+    readings = regularSnapshot.val() ? Object.values(regularSnapshot.val()) : [];
+    readings.sort((a, b) => a.timestamp - b.timestamp);
+    console.log(`Found ${readings.length} regular readings for ${dateString}`);
   }
 
   return {
     dateString,
     readings,
-    isLiveData: readings.length > 0 && (readings[0].timestamp < yesterdayStart || readings[0].timestamp > yesterdayEnd)
+    isLiveData: false // We're now only using data from the correct date
   };
 }
 
 async function generateReport() {
   try {
-    const { dateString, readings, isLiveData } = await getProductionData();
+    const { dateString, readings } = await getProductionData();
     
     let production = 0;
-    let calculation = "No production data available";
+    let calculation = "No production data available for yesterday";
     let firstReading = null;
     let lastReading = null;
 
@@ -88,7 +85,7 @@ async function generateReport() {
       calculation = `Production = ${lastReading.length.toFixed(2)}m (${toIST(lastReading.timestamp)}) - ${firstReading.length.toFixed(2)}m (${toIST(firstReading.timestamp)}) = ${production.toFixed(2)}m`;
     } else if (readings.length === 1) {
       firstReading = lastReading = readings[0];
-      calculation = `Only one reading found: ${firstReading.length.toFixed(2)}m at ${toIST(firstReading.timestamp)}`;
+      calculation = `Only one reading found for yesterday: ${firstReading.length.toFixed(2)}m at ${toIST(firstReading.timestamp)}`;
     }
 
     // Email content
@@ -103,11 +100,11 @@ async function generateReport() {
     await transporter.sendMail({
       from: `"Production Report" <${process.env.SENDER_EMAIL}>`,
       to: process.env.BOSS_EMAIL,
-      subject: `📊 ${isLiveData ? 'LIVE ' : ''}Production Report - ${dateString}`,
+      subject: `📊 Production Report - ${dateString}`,
       html: `
-        <h1 style="color:#2e86c1;">${isLiveData ? 'LIVE ' : ''}Production Report - ${dateString}</h1>
-        ${isLiveData ? `<div style="background:#f39c12;padding:10px;border-radius:5px;margin-bottom:15px;">
-          ⚠️ Using latest available readings (no data found for exact date)
+        <h1 style="color:#2e86c1;">Production Report - ${dateString}</h1>
+        ${readings.length === 0 ? `<div style="background:#e74c3c;padding:10px;border-radius:5px;margin-bottom:15px;">
+          ⚠️ No production data found for this date
         </div>` : ''}
         
         <table border="1" cellpadding="8" style="border-collapse:collapse;margin-bottom:20px;">
@@ -153,7 +150,7 @@ async function generateReport() {
     console.log(`\n✅ REPORT GENERATED FOR ${dateString}`);
     console.log(`- Production: ${production.toFixed(2)}m`);
     console.log(`- Calculation: ${calculation}`);
-    if (isLiveData) console.log('- ⚠️ Used live readings instead of historical data');
+    if (readings.length === 0) console.log('- ⚠️ No data found for this date');
 
   } catch (error) {
     console.error('\n❌ REPORT FAILED:', error);
