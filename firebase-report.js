@@ -27,17 +27,17 @@ function toIST(timestamp) {
 async function getProductionData() {
   // Get yesterday's date in IST
   const now = new Date();
-  const yesterdayIST = new Date(now.getTime() - 86400000); // Subtract 24 hours
+  const yesterdayIST = new Date(now.getTime() - 86400000 + IST_OFFSET);
   const dateString = yesterdayIST.toLocaleDateString('en-IN', {timeZone: 'Asia/Kolkata'});
   
   // Calculate timestamp range for yesterday in IST
-  const yesterdayStart = Math.floor(new Date(yesterdayIST).setHours(0, 0, 0, 0) / 1000;
-  const yesterdayEnd = Math.floor(new Date(yesterdayIST).setHours(23, 59, 59, 999) / 1000;
+  const yesterdayStart = Math.floor(new Date(yesterdayIST.setHours(0, 0, 0, 0)).getTime() / 1000;
+  const yesterdayEnd = Math.floor(new Date(yesterdayIST.setHours(23, 59, 59, 999)).getTime() / 1000;
   
   console.log(`Fetching yesterday's data (${dateString}): ${yesterdayStart} to ${yesterdayEnd}`);
   
   // 1. Try to get yesterday's readings from the perday collection
-  const yesterdaySnapshot = await admin.database().ref('Sensor/perday/readings')
+  const yesterdaySnapshot = await admin.database().ref('Sensor/readings')
     .orderByChild('timestamp')
     .startAt(yesterdayStart)
     .endAt(yesterdayEnd)
