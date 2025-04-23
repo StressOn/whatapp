@@ -23,58 +23,39 @@ function toIST(timestamp) {
   });
 }
 
-// Get production data for a specific date
-async function getProductionData() {
-  // Get yesterday's date in IST
+// Get yesterday's readings from Sensor/readings
+async function getYesterdayReadings() {
   const now = new Date();
-  const yesterdayIST = new Date(now.getTime() - 86400000 + IST_OFFSET);
-  const dateString = yesterdayIST.toLocaleDateString('en-IN', {timeZone: 'Asia/Kolkata'});
-  
-  // Calculate timestamp range for yesterday in IST
-  const yesterdayStart = Math.floor(new Date(yesterdayIST.setHours(0, 0, 0, 0)).getTime() / 1000;
-  const yesterdayEnd = Math.floor(new Date(yesterdayIST.setHours(23, 59, 59, 999)).getTime() / 1000;
-  
+  const yesterdayIST = new Date(now.getTime() + IST_OFFSET - 86400000);
+
+  const dateString = yesterdayIST.toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata' });
+
+  // Get yesterday's 00:00:00 and 23:59:59 IST timestamps
+  yesterdayIST.setHours(0, 0, 0, 0);
+  const yesterdayStart = Math.floor(yesterdayIST.getTime() / 1000);
+  const yesterdayEnd = yesterdayStart + 86399;
+
   console.log(`Fetching yesterday's data (${dateString}): ${yesterdayStart} to ${yesterdayEnd}`);
-  
-  // 1. Try to get yesterday's readings from the perday collection
-  const yesterdaySnapshot = await admin.database().ref('Sensor/readings')
+
+  const snapshot = await admin.database().ref('Sensor/readings')
     .orderByChild('timestamp')
     .startAt(yesterdayStart)
     .endAt(yesterdayEnd)
     .once('value');
 
-  let readings = yesterdaySnapshot.val() ? Object.values(yesterdaySnapshot.val()) : [];
+  const readings = snapshot.val() ? Object.values(snapshot.val()) : [];
   readings.sort((a, b) => a.timestamp - b.timestamp);
 
   console.log(`Found ${readings.length} readings for ${dateString}`);
-
-  // 2. If no readings in perday, check the regular readings collection
-  if (readings.length === 0) {
-    console.log('No readings found in perday, checking regular readings collection...');
-    const regularSnapshot = await admin.database().ref('Sensor/readings')
-      .orderByChild('timestamp')
-      .startAt(yesterdayStart)
-      .endAt(yesterdayEnd)
-      .once('value');
-    
-    readings = regularSnapshot.val() ? Object.values(regularSnapshot.val()) : [];
-    readings.sort((a, b) => a.timestamp - b.timestamp);
-    console.log(`Found ${readings.length} regular readings for ${dateString}`);
-  }
-
-  return {
-    dateString,
-    readings,
-    isLiveData: false // We're now only using data from the correct date
-  };
+  return { dateString, readings };
 }
 
 async function generateReport() {
   try {
-    const { dateString, readings } = await getProductionData();
-    
+    const { dateString, readings } = await getYesterdayReadings();
+
     let production = 0;
-    let calculation = "No production data available for yesterday";
+    let calculation = "No production data available";
     let firstReading = null;
     let lastReading = null;
 
@@ -85,10 +66,9 @@ async function generateReport() {
       calculation = `Production = ${lastReading.length.toFixed(2)}m (${toIST(lastReading.timestamp)}) - ${firstReading.length.toFixed(2)}m (${toIST(firstReading.timestamp)}) = ${production.toFixed(2)}m`;
     } else if (readings.length === 1) {
       firstReading = lastReading = readings[0];
-      calculation = `Only one reading found for yesterday: ${firstReading.length.toFixed(2)}m at ${toIST(firstReading.timestamp)}`;
+      calculation = `Only one reading found: ${firstReading.length.toFixed(2)}m at ${toIST(firstReading.timestamp)}`;
     }
 
-    // Email content
     const transporter = nodemailer.createTransport({
       service: 'gmail',
       auth: {
@@ -103,9 +83,6 @@ async function generateReport() {
       subject: `📊 Production Report - ${dateString}`,
       html: `
         <h1 style="color:#2e86c1;">Production Report - ${dateString}</h1>
-        ${readings.length === 0 ? `<div style="background:#e74c3c;padding:10px;border-radius:5px;margin-bottom:15px;">
-          ⚠️ No production data found for this date
-        </div>` : ''}
         
         <table border="1" cellpadding="8" style="border-collapse:collapse;margin-bottom:20px;">
           <tr><th>Total Production</th><td><strong>${production.toFixed(2)} meters</strong></td></tr>
@@ -142,7 +119,7 @@ async function generateReport() {
         ` : ''}
         
         <p style="margin-top:20px;color:#7f8c8d;">
-          <small>Report generated at: ${new Date().toLocaleString('en-IN', {timeZone: 'Asia/Kolkata'})}</small>
+          <small>Report generated at: ${new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })}</small>
         </p>
       `
     });
@@ -150,7 +127,6 @@ async function generateReport() {
     console.log(`\n✅ REPORT GENERATED FOR ${dateString}`);
     console.log(`- Production: ${production.toFixed(2)}m`);
     console.log(`- Calculation: ${calculation}`);
-    if (readings.length === 0) console.log('- ⚠️ No data found for this date');
 
   } catch (error) {
     console.error('\n❌ REPORT FAILED:', error);
