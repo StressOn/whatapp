@@ -25,7 +25,7 @@ function toIST(timestamp) {
 
 // Get all readings (for testing)
 async function getAllReadings() {
-  const snapshot = await admin.database().ref('Sensor/perday/readings')
+  const snapshot = await admin.database().ref('Sensor/readings')
     .orderByChild('timestamp')
     .once('value');
   return snapshot.val() ? Object.values(snapshot.val()) : [];
